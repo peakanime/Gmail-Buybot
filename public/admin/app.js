@@ -1,9 +1,7 @@
 const API_URL = '/api/admin';
 let token = localStorage.getItem('velrix_admin_token');
 
-if (token) {
-    showDashboard();
-}
+if (token) showDashboard();
 
 async function login() {
     const u = document.getElementById('username').value;
@@ -37,6 +35,10 @@ function showDashboard() {
     switchTab('stats');
 }
 
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+}
+
 async function fetchAuth(url, opts = {}) {
     opts.headers = opts.headers || {};
     opts.headers['Authorization'] = `Bearer ${token}`;
@@ -52,6 +54,7 @@ function closeModal() {
 
 async function switchTab(tab) {
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    document.getElementById('sidebar').classList.remove('open');
     const container = document.getElementById('content-body');
     const title = document.getElementById('section-title');
 
@@ -61,10 +64,10 @@ async function switchTab(tab) {
         container.innerHTML = `
             <div class="grid">
                 <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-val">${d.users.total}</div></div>
-                <div class="stat-card"><div class="stat-title">Tasks in Pool (Admin)</div><div class="stat-val">${d.poolAvailable}</div></div>
-                <div class="stat-card"><div class="stat-title">Pending Submissions</div><div class="stat-val">${d.tasks.pending}</div></div>
-                <div class="stat-card"><div class="stat-title">Total Held Balances</div><div class="stat-val">$${d.financials.totalHeld.toFixed(2)}</div></div>
-                <div class="stat-card"><div class="stat-title">Available Balances</div><div class="stat-val">$${d.financials.availableUserBalance.toFixed(2)}</div></div>
+                <div class="stat-card"><div class="stat-title">Available Pool Tasks</div><div class="stat-val">${d.poolAvailable}</div></div>
+                <div class="stat-card"><div class="stat-title">Pending Reviews</div><div class="stat-val">${d.tasks.pending}</div></div>
+                <div class="stat-card"><div class="stat-title">Locked Hold Balance</div><div class="stat-val">$${d.financials.totalHeld.toFixed(2)}</div></div>
+                <div class="stat-card"><div class="stat-title">User Available Balance</div><div class="stat-val">$${d.financials.availableUserBalance.toFixed(2)}</div></div>
                 <div class="stat-card"><div class="stat-title">Pending Withdrawals</div><div class="stat-val">${d.financials.pendingWithdrawalsCount}</div></div>
             </div>
         `;
@@ -73,23 +76,22 @@ async function switchTab(tab) {
         title.innerText = 'Admin Task Creation & Pool';
         const pool = await fetchAuth(`${API_URL}/tasks/pool`);
         container.innerHTML = `
-            <div class="auth-card" style="width:100%;max-width:800px;margin-bottom:24px;">
-                <h3>➕ Create New Task for Pool</h3>
-                <p class="subtitle">Sellers clicking "🆕 Create New" will immediately receive these preset tasks.</p>
+            <div class="stat-card" style="margin-bottom:20px;">
+                <h3 style="margin-bottom:12px;">➕ Add Gmail Task to Pool</h3>
                 <div class="grid" style="grid-template-columns: 1fr 1fr;">
                     <div><label>First Name:</label><input id="p-first" placeholder="e.g. Alex" /></div>
-                    <div><label>Last Name:</label><input id="p-last" placeholder="e.g. ✖️" value="✖️" /></div>
-                    <div><label>Registration Email:</label><input id="p-email" placeholder="e.g. alex.work@gmail.com" /></div>
-                    <div><label>Task Password:</label><input id="p-pass" placeholder="e.g. SecurePass2026!" value="SecuredTask2026!" /></div>
+                    <div><label>Last Name:</label><input id="p-last" placeholder="✖️" value="✖️" /></div>
+                    <div><label>Email Address:</label><input id="p-email" placeholder="e.g. alex.work@gmail.com" /></div>
+                    <div><label>Password:</label><input id="p-pass" value="SecuredTask2026!" /></div>
                     <div><label>DOB Year:</label><input id="p-dob" type="number" value="1998" /></div>
                     <div><label>Reward ($):</label><input id="p-reward" type="number" step="0.01" value="0.23" /></div>
                 </div>
-                <button class="btn btn-primary btn-block" onclick="createPoolTask()">Publish Task into Pool</button>
+                <button class="btn btn-primary btn-block" onclick="createPoolTask()">Publish Task</button>
             </div>
 
             <div class="table-wrap">
                 <table>
-                    <tr><th>ID</th><th>First Name</th><th>Email</th><th>Password</th><th>Status</th><th>Action</th></tr>
+                    <tr><th>Pool ID</th><th>First Name</th><th>Email</th><th>Password</th><th>Status</th><th>Action</th></tr>
                     ${pool.map(p => `
                         <tr>
                             <td><code>${p.pool_id}</code></td>
@@ -105,16 +107,16 @@ async function switchTab(tab) {
         `;
     }
     else if (tab === 'tasks') {
-        title.innerText = 'Submissions Review (Old & New)';
+        title.innerText = 'Account Submissions';
         const tasks = await fetchAuth(`${API_URL}/tasks`);
         container.innerHTML = `
             <div class="table-wrap">
                 <table>
-                    <tr><th>Task ID</th><th>User</th><th>Type</th><th>Account Data / Credentials</th><th>Reward</th><th>Status</th><th>Review Action</th></tr>
+                    <tr><th>Task ID</th><th>User</th><th>Type</th><th>Submitted Credentials</th><th>Reward</th><th>Status</th><th>Action</th></tr>
                     ${tasks.map(t => {
                         const creds = t.task_type === 'OLD_ACCOUNT' 
                             ? `Email: <b>${t.submitted_email || 'N/A'}</b><br>Pass: <code>${t.submitted_password || 'N/A'}</code>`
-                            : `Assigned: ${t.email}`;
+                            : `Email: ${t.email}`;
                         return `
                         <tr>
                             <td><code>${t.task_id}</code></td>
@@ -136,12 +138,12 @@ async function switchTab(tab) {
         `;
     }
     else if (tab === 'users') {
-        title.innerText = 'Comprehensive User Master Data & Ledger Logs';
+        title.innerText = 'User Master Collector & Logs';
         const users = await fetchAuth(`${API_URL}/users/detailed`);
         container.innerHTML = `
             <div class="table-wrap">
                 <table>
-                    <tr><th>Telegram ID</th><th>User</th><th>Status</th><th>Available</th><th>Hold</th><th>Pending WD</th><th>Tasks (Appr/Rej)</th><th>Actions</th></tr>
+                    <tr><th>Telegram ID</th><th>User</th><th>Status</th><th>Available</th><th>Hold</th><th>Tasks</th><th>Actions</th></tr>
                     ${users.map(u => `
                         <tr>
                             <td><code>${u.telegram_id}</code></td>
@@ -149,12 +151,38 @@ async function switchTab(tab) {
                             <td><span class="badge badge-${u.account_status}">${u.account_status}</span></td>
                             <td><b>$${parseFloat(u.available_balance).toFixed(2)}</b></td>
                             <td>$${parseFloat(u.hold_balance).toFixed(2)}</td>
-                            <td>$${parseFloat(u.pending_withdrawal).toFixed(2)}</td>
-                            <td>${u.approved_tasks} / ${u.rejected_tasks}</td>
+                            <td>${u.approved_tasks} Appr / ${u.rejected_tasks} Rej</td>
                             <td>
-                                <button class="btn btn-primary btn-sm" onclick="openBalanceModal('${u.telegram_id}')">Adjust Balance</button>
+                                <button class="btn btn-primary btn-sm" onclick="openBalanceModal('${u.telegram_id}')"><i class="fa-solid fa-dollar-sign"></i></button>
                                 <button class="btn btn-danger btn-sm" onclick="toggleUserStatus('${u.telegram_id}', '${u.account_status === 'BANNED' ? 'UNBAN' : 'BAN'}')">${u.account_status === 'BANNED' ? 'Unban' : 'Ban'}</button>
-                                <button class="btn btn-sm" style="background:#475569;" onclick="openDirectAlertModal('${u.telegram_id}')">Send Notice</button>
+                                <button class="btn btn-sm" style="background:#334155;color:#fff;" onclick="openDirectAlertModal('${u.telegram_id}')"><i class="fa-solid fa-comment"></i></button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </table>
+            </div>
+        `;
+    }
+    else if (tab === 'withdrawals') {
+        title.innerText = 'Withdrawal Requests';
+        const wds = await fetchAuth(`${API_URL}/withdrawals`);
+        container.innerHTML = `
+            <div class="table-wrap">
+                <table>
+                    <tr><th>ID</th><th>User</th><th>Amount</th><th>Method</th><th>Address</th><th>Status</th><th>Action</th></tr>
+                    ${wds.map(w => `
+                        <tr>
+                            <td><code>${w.withdrawal_id}</code></td>
+                            <td>${w.user_id}</td>
+                            <td><b>$${parseFloat(w.amount).toFixed(2)}</b></td>
+                            <td>${w.method}</td>
+                            <td><small><code>${w.wallet_address}</code></small></td>
+                            <td><span class="badge badge-${w.status}">${w.status}</span></td>
+                            <td>
+                                ${w.status === 'PENDING' ? `
+                                    <button class="btn btn-success btn-sm" onclick="completeWd('${w.withdrawal_id}')">Complete</button>
+                                    <button class="btn btn-danger btn-sm" onclick="rejectWd('${w.withdrawal_id}')">Reject</button>
+                                ` : '-'}
                             </td>
                         </tr>
                     `).join('')}
@@ -163,31 +191,41 @@ async function switchTab(tab) {
         `;
     }
     else if (tab === 'alerts') {
-        title.innerText = 'Rich Broadcast & Direct Alert Sender';
+        title.innerText = 'Rich Broadcast & Notice';
         container.innerHTML = `
-            <div class="auth-card" style="width:100%;max-width:700px;">
-                <h3>📢 Send Rich Alert / Notice</h3>
-                <p class="subtitle">Broadcast text, banner images, and custom clickable URL buttons to sellers.</p>
-                
+            <div class="stat-card" style="max-width:600px;">
                 <label>Target Audience:</label>
                 <select id="a-target">
                     <option value="ALL">All Registered Users</option>
                     <option value="ACTIVE">Active Users Only</option>
                 </select>
-
-                <label>Banner Image URL (Optional):</label>
-                <input id="a-image" placeholder="https://example.com/banner.jpg" />
-
-                <label>Message Content (HTML Allowed):</label>
-                <textarea id="a-text" rows="4" placeholder="Important announcement details..."></textarea>
-
-                <label>Interactive Button 1 (Text & Link):</label>
+                <label>Banner Image Link (Optional):</label>
+                <input id="a-img" placeholder="https://..." />
+                <label>Message Text (HTML):</label>
+                <textarea id="a-text" rows="4" placeholder="Announcement..."></textarea>
+                <label>Custom Link Button (Text & URL):</label>
                 <div class="grid" style="grid-template-columns: 1fr 1fr;">
-                    <input id="a-btn1-text" placeholder="Button Text (e.g. Join Channel)" />
-                    <input id="a-btn1-url" placeholder="https://t.me/yourchannel" />
+                    <input id="a-btn-txt" placeholder="Button Label" />
+                    <input id="a-btn-url" placeholder="https://t.me/..." />
                 </div>
-
-                <button class="btn btn-primary btn-block" onclick="sendRichAlert()">Send Announcement</button>
+                <button class="btn btn-primary btn-block" onclick="sendBroadcast()"><i class="fa-solid fa-paper-plane"></i> Send Alert</button>
+            </div>
+        `;
+    }
+    else if (tab === 'settings') {
+        title.innerText = 'Pricing & Configuration';
+        const s = await fetchAuth(`${API_URL}/settings`);
+        container.innerHTML = `
+            <div class="stat-card" style="max-width:600px;">
+                <label>Old Account Payment ($):</label>
+                <input id="s-old" type="number" step="0.01" value="${s.old_account_payment}" />
+                <label>Create New Payment ($):</label>
+                <input id="s-create" type="number" step="0.01" value="${s.create_new_payment}" />
+                <label>Hold Period (Days):</label>
+                <input id="s-hold" type="number" value="${s.hold_period_days}" />
+                <label>Min Withdrawal ($):</label>
+                <input id="s-minwd" type="number" step="0.01" value="${s.min_withdrawal}" />
+                <button class="btn btn-primary btn-block" onclick="saveSettings()">Save Settings</button>
             </div>
         `;
     }
@@ -203,12 +241,12 @@ async function createPoolTask() {
         rewardAmount: document.getElementById('p-reward').value
     };
     await fetchAuth(`${API_URL}/tasks/pool/create`, { method: 'POST', body: JSON.stringify(body) });
-    alert('Task successfully published into Pool!');
+    alert('Task published into Pool!');
     switchTab('task-pool');
 }
 
 async function deletePoolTask(id) {
-    if (!confirm('Delete this task from pool?')) return;
+    if (!confirm('Delete this task?')) return;
     await fetchAuth(`${API_URL}/tasks/pool/${id}`, { method: 'DELETE' });
     switchTab('task-pool');
 }
@@ -228,18 +266,18 @@ function openBalanceModal(telegramId) {
     document.getElementById('modal-body').innerHTML = `
         <label>Action:</label>
         <select id="m-action">
-            <option value="ADD">➕ Add Funds (Credit)</option>
-            <option value="DEDUCT">➖ Deduct Funds (Debit)</option>
+            <option value="ADD">➕ Add Balance</option>
+            <option value="DEDUCT">➖ Deduct Balance</option>
         </select>
-        <label>Balance Type:</label>
+        <label>Type:</label>
         <select id="m-type">
             <option value="AVAILABLE">Available Balance</option>
             <option value="HOLD">Hold Balance</option>
         </select>
         <label>Amount ($):</label>
-        <input id="m-amount" type="number" step="0.01" placeholder="0.50" />
-        <label>Reason / Audit Description:</label>
-        <input id="m-reason" placeholder="Bonus, manual adjustment, etc." />
+        <input id="m-amount" type="number" step="0.01" placeholder="10.00" />
+        <label>Audit Reason:</label>
+        <input id="m-reason" placeholder="Admin reason..." />
         <button class="btn btn-primary btn-block" onclick="submitBalanceAdjust('${telegramId}')">Execute Adjustment</button>
     `;
     document.getElementById('action-modal').classList.remove('hidden');
@@ -255,24 +293,24 @@ async function submitBalanceAdjust(telegramId) {
     const res = await fetchAuth(`${API_URL}/users/${telegramId}/balance-adjust`, { method: 'POST', body: JSON.stringify(body) });
     if (res.error) return alert(`Error: ${res.error}`);
     closeModal();
-    alert('Balance updated successfully!');
+    alert('Balance adjusted successfully!');
     switchTab('users');
 }
 
 async function toggleUserStatus(telegramId, action) {
-    if (!confirm(`Are you sure you want to execute ${action} on ${telegramId}?`)) return;
+    if (!confirm(`Confirm ${action} for ${telegramId}?`)) return;
     await fetchAuth(`${API_URL}/users/${telegramId}/status-action`, { method: 'POST', body: JSON.stringify({ action }) });
     switchTab('users');
 }
 
 function openDirectAlertModal(telegramId) {
-    document.getElementById('modal-title').innerText = `Send Alert to User: ${telegramId}`;
+    document.getElementById('modal-title').innerText = `Send Alert: ${telegramId}`;
     document.getElementById('modal-body').innerHTML = `
         <label>Message Content:</label>
-        <textarea id="dm-text" rows="4" placeholder="Hello, regarding your account..."></textarea>
-        <label>Optional Photo Link:</label>
+        <textarea id="dm-text" rows="4" placeholder="Hello..."></textarea>
+        <label>Photo URL (Optional):</label>
         <input id="dm-img" placeholder="https://..." />
-        <button class="btn btn-primary btn-block" onclick="sendDirectNotice('${telegramId}')">Send Direct Notice</button>
+        <button class="btn btn-primary btn-block" onclick="sendDirectNotice('${telegramId}')">Send Notice</button>
     `;
     document.getElementById('action-modal').classList.remove('hidden');
 }
@@ -286,22 +324,46 @@ async function sendDirectNotice(telegramId) {
     };
     await fetchAuth(`${API_URL}/messages/send-alert`, { method: 'POST', body: JSON.stringify(body) });
     closeModal();
-    alert('Notice delivered!');
+    alert('Notice sent!');
 }
 
-async function sendRichAlert() {
+async function sendBroadcast() {
+    const bTxt = document.getElementById('a-btn-txt').value;
+    const bUrl = document.getElementById('a-btn-url').value;
     const buttons = [];
-    const bText = document.getElementById('a-btn1-text').value;
-    const bUrl = document.getElementById('a-btn1-url').value;
-    if (bText && bUrl) buttons.push({ text: bText, url: bUrl });
+    if (bTxt && bUrl) buttons.push({ text: bTxt, url: bUrl });
 
     const body = {
         targetType: document.getElementById('a-target').value,
         messageText: document.getElementById('a-text').value,
-        imageUrl: document.getElementById('a-image').value,
+        imageUrl: document.getElementById('a-img').value,
         buttons
     };
 
     await fetchAuth(`${API_URL}/messages/send-alert`, { method: 'POST', body: JSON.stringify(body) });
-    alert('Broadcast initialized successfully!');
+    alert('Broadcast dispatched!');
+}
+
+async function completeWd(wdId) {
+    const txHash = prompt('Enter Blockchain TX Hash (optional):');
+    await fetchAuth(`${API_URL}/withdrawals/${wdId}/process`, { method: 'POST', body: JSON.stringify({ action: 'COMPLETE', txHash }) });
+    switchTab('withdrawals');
+}
+
+async function rejectWd(wdId) {
+    const reason = prompt('Enter rejection reason:');
+    if (!reason) return;
+    await fetchAuth(`${API_URL}/withdrawals/${wdId}/process`, { method: 'POST', body: JSON.stringify({ action: 'REJECT', reason }) });
+    switchTab('withdrawals');
+}
+
+async function saveSettings() {
+    const body = {
+        old_account_payment: parseFloat(document.getElementById('s-old').value),
+        create_new_payment: parseFloat(document.getElementById('s-create').value),
+        hold_period_days: parseInt(document.getElementById('s-hold').value, 10),
+        min_withdrawal: parseFloat(document.getElementById('s-minwd').value)
+    };
+    await fetchAuth(`${API_URL}/settings`, { method: 'POST', body: JSON.stringify(body) });
+    alert('Settings saved!');
 }
