@@ -1,8 +1,11 @@
--- PostgreSQL Production Schema for Velrix Platform
+-- ==========================================================
+-- VELRIX PRODUCTION DATABASE MASTER SCHEMA
+-- Complete Unified Schema with Task Pool, Holds & Ledger
+-- ==========================================================
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 1. USERS
+-- 1. USERS TABLE
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     telegram_id BIGINT UNIQUE NOT NULL,
@@ -20,7 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_users_referrer_id ON users(referrer_id);
 
--- 2. ADMIN USERS (Web Panel)
+-- 2. ADMIN USERS (Web Dashboard Access)
 CREATE TABLE IF NOT EXISTS admin_users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(100) UNIQUE NOT NULL,
@@ -53,7 +56,8 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
         'WITHDRAWAL_RESERVATION', 
         'WITHDRAWAL_COMPLETED', 
         'WITHDRAWAL_REFUND', 
-        'ADJUSTMENT', 
+        'ADJUSTMENT_ADD',
+        'ADJUSTMENT_DEDUCT',
         'REFERRAL_REWARD'
     )),
     amount NUMERIC(15, 4) NOT NULL,
@@ -66,7 +70,26 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 CREATE INDEX IF NOT EXISTS idx_wallet_tx_user_id ON wallet_transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_tx_ref ON wallet_transactions(reference_id);
 
--- 5. TASKS (Seller Submissions & Tasks)
+-- 5. ADMIN TASK POOL (Tasks Created by Admin for Users to Grab)
+CREATE TABLE IF NOT EXISTS admin_task_pool (
+    id BIGSERIAL PRIMARY KEY,
+    pool_id VARCHAR(64) UNIQUE NOT NULL,
+    task_type VARCHAR(50) DEFAULT 'CREATE_NEW',
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) DEFAULT '✖️',
+    email VARCHAR(255) NOT NULL,
+    password_placeholder VARCHAR(255) NOT NULL,
+    dob_year INT NOT NULL,
+    reward_amount NUMERIC(15, 4) NOT NULL DEFAULT 0.23,
+    status VARCHAR(50) DEFAULT 'AVAILABLE' CHECK (status IN ('AVAILABLE', 'ASSIGNED', 'COMPLETED', 'DISABLED')),
+    assigned_to_user_id BIGINT REFERENCES users(telegram_id) ON DELETE SET NULL,
+    assigned_task_id VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pool_status ON admin_task_pool(status);
+
+-- 6. TASKS & SUBMISSIONS (Old Accounts & Active Tasks)
 CREATE TABLE IF NOT EXISTS tasks (
     id BIGSERIAL PRIMARY KEY,
     task_id VARCHAR(64) UNIQUE NOT NULL,
@@ -88,6 +111,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     email VARCHAR(255),
     dob_year INT,
     password_placeholder VARCHAR(255),
+    submitted_email VARCHAR(255),
+    submitted_password VARCHAR(255),
     safe_data JSONB DEFAULT '{}'::jsonb,
     reward_amount NUMERIC(15, 4) NOT NULL DEFAULT 0.0000,
     telegram_message_id BIGINT,
@@ -102,7 +127,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_task_id ON tasks(task_id);
 
--- 6. HOLDS
+-- 7. HOLDS (Locked funds awaiting maturity release)
 CREATE TABLE IF NOT EXISTS holds (
     id BIGSERIAL PRIMARY KEY,
     hold_id VARCHAR(64) UNIQUE NOT NULL,
@@ -117,7 +142,7 @@ CREATE TABLE IF NOT EXISTS holds (
 
 CREATE INDEX IF NOT EXISTS idx_holds_status_release ON holds(status, release_at);
 
--- 7. WITHDRAWALS
+-- 8. WITHDRAWALS
 CREATE TABLE IF NOT EXISTS withdrawals (
     id BIGSERIAL PRIMARY KEY,
     withdrawal_id VARCHAR(64) UNIQUE NOT NULL,
@@ -141,7 +166,7 @@ CREATE TABLE IF NOT EXISTS withdrawals (
 CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals(user_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status);
 
--- 8. REFERRALS & REWARDS
+-- 9. REFERRAL REWARDS
 CREATE TABLE IF NOT EXISTS referral_rewards (
     id BIGSERIAL PRIMARY KEY,
     referrer_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -151,14 +176,14 @@ CREATE TABLE IF NOT EXISTS referral_rewards (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 9. SETTINGS (Dynamic configuration editable from admin panel)
+-- 10. DYNAMIC SYSTEM SETTINGS
 CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR(100) PRIMARY KEY,
     value JSONB NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 10. AUDIT LOGS (Immutable administrative action log)
+-- 11. AUDIT LOGS (Immutable Action Log)
 CREATE TABLE IF NOT EXISTS audit_logs (
     id BIGSERIAL PRIMARY KEY,
     admin_id VARCHAR(100) NOT NULL,
@@ -170,7 +195,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Initial default settings
+-- 12. INITIAL DEFAULT CONFIGURATION SEEDS
 INSERT INTO settings (key, value) VALUES
 ('old_account_payment', '0.20'::jsonb),
 ('create_new_payment', '0.23'::jsonb),
