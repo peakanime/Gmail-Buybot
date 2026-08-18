@@ -3,37 +3,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Velrix Admin Panel — Seller/Buyer Management</title>
+    <title>Velrix Pro Buyer & Task Management Console</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <div id="login-container" class="card">
-        <h2>👑 Buyer Admin Login</h2>
-        <input type="text" id="username" placeholder="Admin Username" />
-        <input type="password" id="password" placeholder="Password" />
-        <button onclick="login()">Login</button>
-        <p id="login-error" class="error"></p>
+
+    <!-- LOGIN SCREEN -->
+    <div id="login-container" class="auth-wrap">
+        <div class="auth-card">
+            <div class="brand"><i class="fa-solid fa-shield-halved"></i> <span>Velrix Control</span></div>
+            <p class="subtitle">Buyer & Account Operations Suite</p>
+            <input type="text" id="username" placeholder="Administrator Username" />
+            <input type="password" id="password" placeholder="Master Password" />
+            <button class="btn btn-primary btn-block" onclick="login()">Enter Console</button>
+            <div id="login-error" class="error-msg"></div>
+        </div>
     </div>
 
-    <div id="dashboard-container" class="hidden">
-        <header>
-            <h1>Velrix Buyer Control Platform</h1>
-            <button onclick="logout()">Logout</button>
-        </header>
+    <!-- MAIN APP DASHBOARD -->
+    <div id="dashboard-container" class="app-layout hidden">
+        <!-- SIDEBAR -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <i class="fa-solid fa-bolt text-accent"></i> <span>Velrix Admin</span>
+            </div>
+            <nav class="nav-menu">
+                <a class="nav-item active" onclick="switchTab('stats')"><i class="fa-solid fa-chart-pie"></i> <span>Dashboard</span></a>
+                <a class="nav-item" onclick="switchTab('task-pool')"><i class="fa-solid fa-circle-plus"></i> <span>Admin Create Task</span></a>
+                <a class="nav-item" onclick="switchTab('tasks')"><i class="fa-solid fa-inbox"></i> <span>Submissions</span></a>
+                <a class="nav-item" onclick="switchTab('users')"><i class="fa-solid fa-users"></i> <span>User Data & Logs</span></a>
+                <a class="nav-item" onclick="switchTab('withdrawals')"><i class="fa-solid fa-money-bill-transfer"></i> <span>Withdrawals</span></a>
+                <a class="nav-item" onclick="switchTab('alerts')"><i class="fa-solid fa-bullhorn"></i> <span>Rich Alerts & Notice</span></a>
+                <a class="nav-item" onclick="switchTab('settings')"><i class="fa-solid fa-sliders"></i> <span>Settings</span></a>
+            </nav>
+            <div class="sidebar-footer">
+                <button class="btn btn-danger btn-sm btn-block" onclick="logout()"><i class="fa-solid fa-power-off"></i> Logout</button>
+            </div>
+        </aside>
 
-        <nav>
-            <button onclick="loadSection('stats')">📊 Dashboard</button>
-            <button onclick="loadSection('tasks')">📥 Submissions & Tasks</button>
-            <button onclick="loadSection('withdrawals')">💸 Withdrawals</button>
-            <button onclick="loadSection('users')">👥 Users & Balances</button>
-            <button onclick="loadSection('settings')">⚙️ Settings</button>
-            <button onclick="loadSection('broadcast')">📢 Broadcast</button>
-            <button onclick="loadSection('logs')">📝 Audit Logs</button>
-        </nav>
-
-        <main id="content">
-            <!-- Dynamic content loaded via app.js -->
+        <!-- MAIN VIEWPORT -->
+        <main class="content-area">
+            <header class="topbar">
+                <h2 id="section-title">Dashboard Overview</h2>
+                <div class="user-chip"><i class="fa-solid fa-user-shield"></i> <span id="admin-badge">Admin</span></div>
+            </header>
+            
+            <div id="content-body" class="p-6">
+                <!-- Dynamically loaded content -->
+            </div>
         </main>
+    </div>
+
+    <!-- MODAL: Balance Adjustment & Direct Alert -->
+    <div id="action-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Action</h3>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div id="modal-body"></div>
+        </div>
     </div>
 
     <script src="app.js"></script>
