@@ -2,65 +2,71 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Velrix Pro Buyer & Task Management Console</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Velrix Pro Buyer Console</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
 
-    <!-- LOGIN SCREEN -->
+    <!-- AUTH SCREEN -->
     <div id="login-container" class="auth-wrap">
         <div class="auth-card">
             <div class="brand"><i class="fa-solid fa-shield-halved"></i> <span>Velrix Control</span></div>
-            <p class="subtitle">Buyer & Account Operations Suite</p>
-            <input type="text" id="username" placeholder="Administrator Username" />
-            <input type="password" id="password" placeholder="Master Password" />
-            <button class="btn btn-primary btn-block" onclick="login()">Enter Console</button>
+            <p class="subtitle">Buyer Master Administration</p>
+            <input type="text" id="username" placeholder="Username" autocomplete="off" />
+            <input type="password" id="password" placeholder="Password" />
+            <button class="btn btn-primary btn-block" onclick="login()"><i class="fa-solid fa-right-to-bracket"></i> Enter Console</button>
             <div id="login-error" class="error-msg"></div>
         </div>
     </div>
 
-    <!-- MAIN APP DASHBOARD -->
+    <!-- MAIN DASHBOARD -->
     <div id="dashboard-container" class="app-layout hidden">
-        <!-- SIDEBAR -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <i class="fa-solid fa-bolt text-accent"></i> <span>Velrix Admin</span>
+        <!-- TOPBAR (Mobile & Desktop) -->
+        <header class="topbar">
+            <div class="top-left">
+                <button class="mobile-toggle" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
+                <div class="brand-text"><i class="fa-solid fa-bolt text-accent"></i> <span>Velrix Buyer</span></div>
             </div>
-            <nav class="nav-menu">
-                <a class="nav-item active" onclick="switchTab('stats')"><i class="fa-solid fa-chart-pie"></i> <span>Dashboard</span></a>
-                <a class="nav-item" onclick="switchTab('task-pool')"><i class="fa-solid fa-circle-plus"></i> <span>Admin Create Task</span></a>
-                <a class="nav-item" onclick="switchTab('tasks')"><i class="fa-solid fa-inbox"></i> <span>Submissions</span></a>
-                <a class="nav-item" onclick="switchTab('users')"><i class="fa-solid fa-users"></i> <span>User Data & Logs</span></a>
-                <a class="nav-item" onclick="switchTab('withdrawals')"><i class="fa-solid fa-money-bill-transfer"></i> <span>Withdrawals</span></a>
-                <a class="nav-item" onclick="switchTab('alerts')"><i class="fa-solid fa-bullhorn"></i> <span>Rich Alerts & Notice</span></a>
-                <a class="nav-item" onclick="switchTab('settings')"><i class="fa-solid fa-sliders"></i> <span>Settings</span></a>
-            </nav>
-            <div class="sidebar-footer">
-                <button class="btn btn-danger btn-sm btn-block" onclick="logout()"><i class="fa-solid fa-power-off"></i> Logout</button>
-            </div>
-        </aside>
-
-        <!-- MAIN VIEWPORT -->
-        <main class="content-area">
-            <header class="topbar">
-                <h2 id="section-title">Dashboard Overview</h2>
+            <div class="top-right">
                 <div class="user-chip"><i class="fa-solid fa-user-shield"></i> <span id="admin-badge">Admin</span></div>
-            </header>
-            
-            <div id="content-body" class="p-6">
-                <!-- Dynamically loaded content -->
+                <button class="btn btn-danger btn-sm" onclick="logout()"><i class="fa-solid fa-power-off"></i></button>
             </div>
-        </main>
+        </header>
+
+        <div class="body-wrapper">
+            <!-- SIDEBAR NAV -->
+            <aside class="sidebar" id="sidebar">
+                <nav class="nav-menu">
+                    <button class="nav-item active" onclick="switchTab('stats')"><i class="fa-solid fa-chart-pie"></i> <span>Dashboard</span></button>
+                    <button class="nav-item" onclick="switchTab('task-pool')"><i class="fa-solid fa-circle-plus"></i> <span>Create Tasks (Pool)</span></button>
+                    <button class="nav-item" onclick="switchTab('tasks')"><i class="fa-solid fa-inbox"></i> <span>Submissions</span></button>
+                    <button class="nav-item" onclick="switchTab('users')"><i class="fa-solid fa-users"></i> <span>User Data & Logs</span></button>
+                    <button class="nav-item" onclick="switchTab('withdrawals')"><i class="fa-solid fa-money-bill-transfer"></i> <span>Withdrawals</span></button>
+                    <button class="nav-item" onclick="switchTab('alerts')"><i class="fa-solid fa-bullhorn"></i> <span>Rich Broadcast / Alerts</span></button>
+                    <button class="nav-item" onclick="switchTab('settings')"><i class="fa-solid fa-sliders"></i> <span>Pricing & Settings</span></button>
+                </nav>
+            </aside>
+
+            <!-- MAIN VIEWPORT -->
+            <main class="content-area">
+                <div class="content-header">
+                    <h2 id="section-title">Dashboard Overview</h2>
+                </div>
+                <div id="content-body" class="content-body">
+                    <!-- Dynamic rendering -->
+                </div>
+            </main>
+        </div>
     </div>
 
-    <!-- MODAL: Balance Adjustment & Direct Alert -->
+    <!-- UNIVERSAL MODAL -->
     <div id="action-modal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header">
                 <h3 id="modal-title">Action</h3>
-                <span class="close" onclick="closeModal()">&times;</span>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
             </div>
             <div id="modal-body"></div>
         </div>
