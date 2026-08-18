@@ -4,7 +4,7 @@ import { query, withTransaction } from '../db/index.js';
 import { getSetting } from '../services/settingsService.js';
 import { getUserWallet } from '../services/accounting.js';
 import { requestWithdrawal } from '../services/withdrawalService.js';
-import { isValidEthereumAddress, isValidLitecoinAddress, sanitizeInput } from '../utils/validators.js';
+import { normalizeAndValidateEthereum, normalizeAndValidateLitecoin, sanitizeInput } from '../utils/validators.js';
 import {
     mainMenuKeyboard,
     sellSubMenuKeyboard,
@@ -18,10 +18,21 @@ export function createTelegramBot(token) {
     const bot = new Telegraf(token);
     bot.use(session());
 
-    // Middleware: User Registration, Activity Tracking & Ban Enforcement
+    // ---------------------------------------------------------
+    // MIDDLEWARE: User Registration, Activity & Ban Enforcement
+    // ---------------------------------------------------------
     bot.use(async (ctx, next) => {
         if (!ctx.from) return next();
-        const { id, username, first_name, last_name } = ctx.from;
+        const { id, username, first_name, last_name, language_code, is_premium } = ctx.from;
+
+        const metadata = {
+            username: username || null,
+            first_name: first_name || null,
+            last_name: last_name || null,
+            language_code: language_code || 'en',
+            is_premium: is_premium || false,
+            last_seen: new Date().toISOString()
+        };
 
         let res = await query('SELECT * FROM users WHERE telegram_id = $1', [id]);
         if (res.rows.length === 0) {
@@ -32,43 +43,165 @@ export function createTelegramBot(token) {
             }
 
             await query(`
-                INSERT INTO users (telegram_id, username, first_name, last_name, referrer_id)
-                VALUES ($1, $2, $3, $4, $5)
+                INSERT INTO users (telegram_id, username, first_name, last_name, language_code, referrer_id, user_metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (telegram_id) DO UPDATE 
-                SET username = EXCLUDED.username, first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, updated_at = CURRENT_TIMESTAMP
-            `, [id, username || null, first_name || null, last_name || null, referrerId]);
+                SET username = EXCLUDED.username, first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, user_metadata = EXCLUDED.user_metadata, updated_at = CURRENT_TIMESTAMP
+            `, [id, username || null, first_name || null, last_name || null, language_code || 'en', referrerId, JSON.stringify(metadata)]);
 
             await query('INSERT INTO wallets (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
         } else {
             const user = res.rows[0];
             if (user.account_status === 'BANNED') {
-                return ctx.reply('⛔ <b>Access Denied:</b> Your account has been banned by the buyer.', { parse_mode: 'HTML' });
+                return ctx.reply('⛔ <b>Access Denied:</b> Your account has been permanently suspended by the buyer.', { parse_mode: 'HTML' });
             }
-            await query('UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE telegram_id = $1', [id]);
+            await query(`
+                UPDATE users 
+                SET username = $1, first_name = $2, last_name = $3, user_metadata = $4, updated_at = CURRENT_TIMESTAMP 
+                WHERE telegram_id = $5
+            `, [username || null, first_name || null, last_name || null, JSON.stringify(metadata), id]);
         }
         return next();
     });
 
+    // ---------------------------------------------------------
+    // 👑 TELEGRAM ADMIN COMMAND: /backup
+    // ---------------------------------------------------------
+    bot.command('backup', async (ctx) => {
+        const adminId = parseInt(process.env.ADMIN_TELEGRAM_ID, 10);
+        if (ctx.from.id !== adminId) {
+            return ctx.reply('⛔ You do not have administrator permissions to run this command.');
+        }
+
+        const statusMsg = await ctx.reply('🔄 <b>Generating full database backup...</b>', { parse_mode: 'HTML' });
+
+        try {
+            const [users, wallets, transactions, tasks, pool, withdrawals, holds, settings, auditLogs] = await Promise.all([
+                query('SELECT * FROM users ORDER BY id ASC'),
+                query('SELECT * FROM wallets ORDER BY id ASC'),
+                query('SELECT * FROM wallet_transactions ORDER BY id ASC'),
+                query('SELECT * FROM tasks ORDER BY id ASC'),
+                query('SELECT * FROM admin_task_pool ORDER BY id ASC'),
+                query('SELECT * FROM withdrawals ORDER BY id ASC'),
+                query('SELECT * FROM holds ORDER BY id ASC'),
+                query('SELECT * FROM settings'),
+                query('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 500')
+            ]);
+
+            const backupData = {
+                export_date: new Date().toISOString(),
+                environment: process.env.NODE_ENV || 'production',
+                summary: {
+                    total_users: users.rows.length,
+                    total_wallets: wallets.rows.length,
+                    total_transactions: transactions.rows.length,
+                    total_tasks: tasks.rows.length,
+                    total_pool_tasks: pool.rows.length,
+                    total_withdrawals: withdrawals.rows.length,
+                    total_holds: holds.rows.length
+                },
+                database: {
+                    users: users.rows,
+                    wallets: wallets.rows,
+                    wallet_transactions: transactions.rows,
+                    tasks: tasks.rows,
+                    admin_task_pool: pool.rows,
+                    withdrawals: withdrawals.rows,
+                    holds: holds.rows,
+                    settings: settings.rows,
+                    audit_logs: auditLogs.rows
+                }
+            };
+
+            const jsonBuffer = Buffer.from(JSON.stringify(backupData, null, 2), 'utf-8');
+            const fileName = `Velrix_Backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+
+            await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+
+            await ctx.replyWithDocument(
+                { source: jsonBuffer, filename: fileName },
+                {
+                    caption: `📦 <b>Full Database Backup Export Complete!</b>\n\n` +
+                             `👥 Users: <code>${users.rows.length}</code>\n` +
+                             `📋 Tasks: <code>${tasks.rows.length}</code>\n` +
+                             `🏊 Pool Tasks: <code>${pool.rows.length}</code>\n` +
+                             `💳 Ledger TXs: <code>${transactions.rows.length}</code>\n` +
+                             `💸 Withdrawals: <code>${withdrawals.rows.length}</code>\n` +
+                             `📅 Export Date: <code>${new Date().toUTCString()}</code>`,
+                    parse_mode: 'HTML'
+                }
+            );
+        } catch (err) {
+            console.error('Backup command error:', err);
+            await ctx.reply(`⚠️ Backup export failed: ${err.message}`);
+        }
+    });
+
+    // ---------------------------------------------------------
+    // 1. /start (WITH OPTIONAL PROFILE VERIFICATION CONTACT SHARE)
+    // ---------------------------------------------------------
     bot.start(async (ctx) => {
-        const welcomeText = `👋 <b>Welcome to the Account Submission Platform!</b>\n\nSubmit accounts directly to the buyer, track hold balances, and withdraw earnings securely.`;
+        const userRes = await query('SELECT is_verified, phone_number FROM users WHERE telegram_id = $1', [ctx.from.id]);
+        const user = userRes.rows[0];
+
+        const welcomeText = `👋 <b>Welcome to the Account Submission Platform!</b>\n\nSubmit accounts directly to the buyer, manage your earnings, and withdraw securely.`;
+
+        // If user hasn't shared contact, show the verification contact button
+        if (!user?.is_verified && !user?.phone_number) {
+            const verifyKeyboard = Markup.keyboard([
+                [Markup.button.contactRequest('📲 Verify Profile (Share Contact)')],
+                ['➕ Sell Account', '💰 Balance'],
+                ['💸 Withdraw', '📋 My Tasks'],
+                ['📜 Transaction History', '👥 Referral'],
+                ['⚙️ Settings', '❓ Help']
+            ]).resize();
+
+            return await ctx.replyWithHTML(
+                `${welcomeText}\n\n💡 <i>Tip: Tap <b>📲 Verify Profile</b> below to link your account for priority submission reviews and payouts.</i>`,
+                verifyKeyboard
+            );
+        }
+
         await ctx.replyWithHTML(welcomeText, mainMenuKeyboard);
     });
 
+    // Handle Contact Submission
+    bot.on('contact', async (ctx) => {
+        const contact = ctx.message.contact;
+        if (!contact || contact.user_id !== ctx.from.id) {
+            return ctx.reply('⚠️ Please share your own contact using the verification button.', mainMenuKeyboard);
+        }
+
+        await query(`
+            UPDATE users 
+            SET phone_number = $1, is_verified = TRUE, updated_at = CURRENT_TIMESTAMP 
+            WHERE telegram_id = $2
+        `, [contact.phone_number, ctx.from.id]);
+
+        await ctx.reply(
+            `✅ <b>Profile Verified!</b>\n\nYour contact number (<code>${contact.phone_number}</code>) has been securely stored on your buyer account.`,
+            { parse_mode: 'HTML', ...mainMenuKeyboard }
+        );
+    });
+
+    // ---------------------------------------------------------
+    // 2. MAIN USER MENU
+    // ---------------------------------------------------------
     bot.hears('➕ Sell Account', async (ctx) => {
         const userRes = await query('SELECT selling_restricted, account_status FROM users WHERE telegram_id = $1', [ctx.from.id]);
         if (userRes.rows[0]?.selling_restricted || userRes.rows[0]?.account_status === 'SUSPENDED') {
-            return ctx.reply('⚠️ Account submission is temporarily restricted on your account.');
+            return ctx.reply('⚠️ Account submission is temporarily restricted on your account. Please contact support.');
         }
         await ctx.reply('Select submission type:', sellSubMenuKeyboard);
     });
 
     bot.hears('💰 Balance', async (ctx) => {
         const w = await getUserWallet(ctx.from.id);
-        const msg = `💰 <b>Balance</b>\n\n` +
-                    `Available: $${w.available.toFixed(2)}\n` +
+        const msg = `💰 <b>Balance Overview</b>\n\n` +
+                    `Available: <b>$${w.available.toFixed(2)}</b>\n` +
                     `🔒 Hold: $${w.hold.toFixed(2)}\n` +
                     `⏳ Withdrawal Pending: $${w.pending.toFixed(2)}\n\n` +
-                    `<b>Total: $${w.total.toFixed(2)}</b>`;
+                    `<b>Total Balance: $${w.total.toFixed(2)}</b>`;
         await ctx.replyWithHTML(msg);
     });
 
@@ -76,8 +209,8 @@ export function createTelegramBot(token) {
         const w = await getUserWallet(ctx.from.id);
         const minWd = await getSetting('min_withdrawal', 0.15);
 
-        const msg = `💸 <b>Withdraw</b>\n\n` +
-                    `Available Balance: $${w.available.toFixed(2)}\n` +
+        const msg = `💸 <b>Withdraw Funds</b>\n\n` +
+                    `Available Balance: <b>$${w.available.toFixed(2)}</b>\n` +
                     `🔒 Hold Balance: $${w.hold.toFixed(2)}\n\n` +
                     `Minimum Withdrawal: $${parseFloat(minWd).toFixed(2)}\n\n` +
                     `Select Payment Method:`;
@@ -103,14 +236,14 @@ export function createTelegramBot(token) {
             'SELECT transaction_id, type, amount, balance_type, reference_id, created_at FROM wallet_transactions WHERE user_id = $1 ORDER BY id DESC LIMIT 10',
             [ctx.from.id]
         );
-        if (res.rows.length === 0) return ctx.reply('📜 No transaction history found.');
+        if (res.rows.length === 0) return ctx.reply('📜 No transaction records found.');
 
         let text = '📜 <b>Transaction History:</b>\n\n';
         for (const tx of res.rows) {
             const sign = parseFloat(tx.amount) >= 0 ? '+' : '';
             text += `📋 <b>${tx.transaction_id}</b>\n` +
                     `Type: ${tx.type}\n` +
-                    `Amount: ${sign}$${parseFloat(tx.amount).toFixed(2)} (${tx.balance_type})\n` +
+                    `Amount: <b>${sign}$${parseFloat(tx.amount).toFixed(2)}</b> (${tx.balance_type})\n` +
                     `Date: ${new Date(tx.created_at).toLocaleDateString('en-GB')}\n\n`;
         }
         await ctx.replyWithHTML(text);
@@ -137,7 +270,15 @@ export function createTelegramBot(token) {
     });
 
     bot.hears('⚙️ Settings', async (ctx) => {
-        await ctx.replyWithHTML(`⚙️ <b>User Profile & Settings</b>\n\nTelegram ID: <code>${ctx.from.id}</code>\nUsername: @${ctx.from.username || 'None'}`);
+        const userRes = await query('SELECT phone_number, is_verified FROM users WHERE telegram_id = $1', [ctx.from.id]);
+        const u = userRes.rows[0];
+        await ctx.replyWithHTML(
+            `⚙️ <b>Profile Information</b>\n\n` +
+            `Telegram ID: <code>${ctx.from.id}</code>\n` +
+            `Username: @${ctx.from.username || 'None'}\n` +
+            `Phone: <code>${u?.phone_number || 'Not Linked'}</code>\n` +
+            `Verification Status: ${u?.is_verified ? '🟢 Verified' : '⚪ Unverified'}`
+        );
     });
 
     bot.hears('❓ Help', async (ctx) => {
@@ -145,7 +286,9 @@ export function createTelegramBot(token) {
         await ctx.replyWithHTML(`❓ <b>Help & FAQ</b>\n\n${guide}`);
     });
 
-    // Submenu Actions
+    // ---------------------------------------------------------
+    // 3. INLINE SUBMENUS & CALLBACKS
+    // ---------------------------------------------------------
     bot.action('menu_main', async (ctx) => {
         await ctx.answerCbQuery();
         await ctx.deleteMessage().catch(() => {});
@@ -157,7 +300,7 @@ export function createTelegramBot(token) {
         await ctx.editMessageText('Select submission type:', sellSubMenuKeyboard);
     });
 
-    // OLD ACCOUNT FLOW
+    // OLD ACCOUNT FLOW (PRO FORMAT)
     bot.action('sell_old_account', async (ctx) => {
         await ctx.answerCbQuery();
         const text = `Old Account Submission\n\nSubmit your existing account information for buyer review.`;
@@ -170,18 +313,17 @@ export function createTelegramBot(token) {
         ctx.session.step = 'AWAITING_OLD_ACCOUNT_DATA';
 
         const promptText = `Please send the account email address & password Like this format (pro text)\n\n` +
-                           `user82626@gmail.com\n` +
-                           `Pass173551\n\n` +
+                           `<code>user82626@gmail.com</code>\n` +
+                           `<code>Pass173551</code>\n\n` +
                            `⚠️  DO NOT Add Any OTP, recovery codes, or 2FA codes.`;
 
-        await ctx.editMessageText(promptText);
+        await ctx.editMessageText(promptText, { parse_mode: 'HTML' });
     });
 
-    // STRICT ADMIN-POOL CREATE NEW TASK FLOW
+    // CREATE NEW ACCOUNT FLOW (STRICT ADMIN POOL ONLY)
     bot.action('sell_create_new', async (ctx) => {
         await ctx.answerCbQuery();
 
-        // 1. Fetch exactly 1 task from pool atomically with lock
         let poolTask = null;
         await withTransaction(async (client) => {
             const poolRes = await client.query(`
@@ -218,11 +360,11 @@ export function createTelegramBot(token) {
             }
         });
 
-        // 2. If NO tasks in admin pool, DO NOT AUTO GENERATE!
+        // If no tasks in admin pool, DO NOT AUTO GENERATE!
         if (!poolTask) {
             return ctx.editMessageText(
                 `❌ <b>No Account Creation Tasks Available</b>\n\n` +
-                `The buyer has not added new tasks right now. Please check back later or choose 🟢 <b>Old Account</b> to submit existing accounts.`,
+                `The buyer has not added new creation tasks right now. Please check back later or choose 🟢 <b>Old Account</b> to submit existing accounts.`,
                 { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'sell_menu')]]) }
             );
         }
@@ -252,10 +394,7 @@ export function createTelegramBot(token) {
         await ctx.answerCbQuery();
 
         const taskRes = await query('SELECT * FROM tasks WHERE task_id = $1', [taskId]);
-        if (taskRes.rows.length === 0) return;
-        const task = taskRes.rows[0];
-
-        if (task.status !== 'CREATED') return ctx.reply(`Task is already ${task.status}.`);
+        if (taskRes.rows.length === 0 || taskRes.rows[0].status !== 'CREATED') return;
 
         await query(`
             UPDATE tasks 
@@ -263,9 +402,7 @@ export function createTelegramBot(token) {
             WHERE task_id = $1
         `, [taskId]);
 
-        await ctx.editMessageText(
-            `⏳ Your Gmail account creation task has been submitted for review.\n\nPlease wait for confirmation.`
-        );
+        await ctx.editMessageText(`⏳ Your Gmail account creation task (${taskId}) has been submitted for review.\n\nPlease wait for confirmation.`);
     });
 
     // CANCEL FLOW
@@ -304,17 +441,32 @@ export function createTelegramBot(token) {
         await ctx.reply(guide);
     });
 
-    // WITHDRAWAL CALLBACKS
+    // ---------------------------------------------------------
+    // 4. WITHDRAWAL HANDLERS
+    // ---------------------------------------------------------
     bot.action(/wd_method_(.+)/, async (ctx) => {
-        const method = ctx.match[1];
+        const method = ctx.match[1]; // 'USDT_ERC20' or 'LTC'
         await ctx.answerCbQuery();
 
         ctx.session = ctx.session || {};
         ctx.session.wd_method = method;
         ctx.session.step = 'AWAITING_WD_ADDRESS';
 
-        const label = method === 'USDT_ERC20' ? '🪙 USDT — ERC-20' : '🪙 LTC — Litecoin Network';
-        await ctx.editMessageText(`${label}\n\nPlease enter your wallet address:`);
+        if (method === 'USDT_ERC20') {
+            await ctx.editMessageText(
+                `🪙 <b>USDT — Ethereum (ERC-20)</b>\n\n` +
+                `Please enter your ERC-20 wallet address:\n` +
+                `<i>Example: 0x71C... (42 characters)</i>`,
+                { parse_mode: 'HTML' }
+            );
+        } else {
+            await ctx.editMessageText(
+                `🪙 <b>Litecoin (LTC)</b>\n\n` +
+                `Please enter your Litecoin wallet address:\n` +
+                `<i>Supports: L..., M..., or Native Segwit (ltc1...)</i>`,
+                { parse_mode: 'HTML' }
+            );
+        }
     });
 
     bot.action('wd_back_to_methods', async (ctx) => {
@@ -322,7 +474,7 @@ export function createTelegramBot(token) {
         const w = await getUserWallet(ctx.from.id);
         const minWd = await getSetting('min_withdrawal', 0.15);
 
-        const msg = `💸 <b>Withdraw</b>\n\n` +
+        const msg = `💸 <b>Withdraw Funds</b>\n\n` +
                     `Available Balance: $${w.available.toFixed(2)}\n` +
                     `🔒 Hold Balance: $${w.hold.toFixed(2)}\n\n` +
                     `Minimum Withdrawal: $${parseFloat(minWd).toFixed(2)}\n\n` +
@@ -358,18 +510,21 @@ export function createTelegramBot(token) {
         }
     });
 
-    // TEXT HANDLER
+    // ---------------------------------------------------------
+    // 5. TEXT INPUT HANDLER (Old Account & Withdrawal Address)
+    // ---------------------------------------------------------
     bot.on('text', async (ctx) => {
         const text = ctx.message.text.trim();
         ctx.session = ctx.session || {};
 
+        // A. Old Account Submission Format
         if (ctx.session.step === 'AWAITING_OLD_ACCOUNT_DATA') {
             const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
             if (lines.length < 2) {
-                return ctx.reply(
-                    `⚠️ Invalid Format!\nPlease send both email and password on separate lines:\n\n` +
-                    `user82626@gmail.com\n` +
-                    `Pass173551\n\n` +
+                return ctx.replyWithHTML(
+                    `⚠️ <b>Invalid Format!</b>\nPlease send both email and password on separate lines:\n\n` +
+                    `<code>user82626@gmail.com</code>\n` +
+                    `<code>Pass173551</code>\n\n` +
                     `⚠️  DO NOT Add Any OTP, recovery codes, or 2FA codes.`
                 );
             }
@@ -385,32 +540,47 @@ export function createTelegramBot(token) {
             `, [taskId, ctx.from.id, submittedEmail, submittedPassword, parseFloat(reward)]);
 
             ctx.session.step = null;
-            await ctx.reply(
-                `⏳ Your account submission is under review.\n\nPlease wait for confirmation.\n\nTask ID: ${taskId}`,
+            await ctx.replyWithHTML(
+                `⏳ Your account submission is under review.\n\nPlease wait for confirmation.\n\nTask ID: <code>${taskId}</code>`,
                 mainMenuKeyboard
             );
             return;
         }
 
+        // B. Withdrawal Address Input
         if (ctx.session.step === 'AWAITING_WD_ADDRESS') {
             const method = ctx.session.wd_method;
-            if (method === 'USDT_ERC20' && !isValidEthereumAddress(text)) {
-                return ctx.reply('⚠️ Invalid ERC-20 address format. Please re-enter:');
-            }
-            if (method === 'LTC' && !isValidLitecoinAddress(text)) {
-                return ctx.reply('⚠️ Invalid Litecoin address format. Please re-enter:');
+
+            if (method === 'USDT_ERC20') {
+                const validAddress = normalizeAndValidateEthereum(text);
+                if (!validAddress) {
+                    return ctx.replyWithHTML(
+                        `⚠️ <b>Invalid ERC-20 Address!</b>\n\n` +
+                        `Please enter a valid Ethereum ERC-20 address (starts with <code>0x</code> and has 42 characters).\n\n` +
+                        `Please re-enter your USDT address:`
+                    );
+                }
+                ctx.session.wd_address = validAddress;
+            } else if (method === 'LTC') {
+                const validAddress = normalizeAndValidateLitecoin(text);
+                if (!validAddress) {
+                    return ctx.replyWithHTML(
+                        `⚠️ <b>Invalid Litecoin Address!</b>\n\n` +
+                        `Please enter a valid Litecoin address (starts with <code>L</code>, <code>M</code>, <code>3</code>, or <code>ltc1</code>).\n\n` +
+                        `Please re-enter your LTC address:`
+                    );
+                }
+                ctx.session.wd_address = validAddress;
             }
 
-            ctx.session.wd_address = text;
             ctx.session.step = 'AWAITING_WD_CONFIRM';
-
             const w = await getUserWallet(ctx.from.id);
             const label = method === 'USDT_ERC20' ? 'USDT — ERC-20' : 'LTC — Litecoin';
 
             const confText = `💸 <b>Withdrawal Confirmation</b>\n\n` +
                              `Amount: $${w.available.toFixed(2)}\n` +
                              `Method: ${label}\n` +
-                             `Address: <code>${text}</code>\n\n` +
+                             `Address: <code>${ctx.session.wd_address}</code>\n\n` +
                              `⚠️ Make sure the network and address are correct before confirming.`;
 
             await ctx.replyWithHTML(confText, getWithdrawConfirmKeyboard(method));
