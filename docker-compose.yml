@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://velrix:velrix_secure_pwd@db:5432/velrix_db
+      - BOT_TOKEN=${BOT_TOKEN}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - APP_URL=${APP_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_DEFAULT_USER=${ADMIN_DEFAULT_USER}
+      - ADMIN_DEFAULT_PASS=${ADMIN_DEFAULT_PASS}
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: velrix
+      POSTGRES_PASSWORD: velrix_secure_pwd
+      POSTGRES_DB: velrix_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+volumes:
+  pgdata:
