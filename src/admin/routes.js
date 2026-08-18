@@ -14,15 +14,19 @@ import { notifyUser } from '../services/notificationService.js';
 export function createAdminRouter(botInstance) {
     const router = express.Router();
 
-    // 1. Login
+    // ---------------------------------------------------------
+    // 1. ADMIN AUTHENTICATION
+    // ---------------------------------------------------------
     router.post('/login', async (req, res) => {
         const { username, password } = req.body;
+        if (!username || !password) return res.status(400).json({ error: 'Username and password required.' });
+
         const adminRes = await query('SELECT * FROM admin_users WHERE username = $1', [username]);
-        if (adminRes.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+        if (adminRes.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials.' });
 
         const admin = adminRes.rows[0];
         const match = await bcrypt.compare(password, admin.password_hash);
-        if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+        if (!match) return res.status(401).json({ error: 'Invalid credentials.' });
 
         const token = jwt.sign(
             { id: admin.id, username: admin.username, role: admin.role },
@@ -32,7 +36,9 @@ export function createAdminRouter(botInstance) {
         res.json({ token, username: admin.username, role: admin.role });
     });
 
-    // 2. Stats
+    // ---------------------------------------------------------
+    // 2. DASHBOARD ANALYTICS & STATS
+    // ---------------------------------------------------------
     router.get('/dashboard', authenticateAdmin, async (req, res) => {
         try {
             const [users, active, tasks, pendingTasks, wallets, completedWd, pendingWd, poolCount] = await Promise.all([
@@ -62,7 +68,9 @@ export function createAdminRouter(botInstance) {
         }
     });
 
-    // 3. Admin Task Pool
+    // ---------------------------------------------------------
+    // 3. ADMIN TASK POOL CREATION & MANAGEMENT
+    // ---------------------------------------------------------
     router.get('/tasks/pool', authenticateAdmin, async (req, res) => {
         const result = await query('SELECT * FROM admin_task_pool ORDER BY id DESC LIMIT 200');
         res.json(result.rows);
@@ -93,7 +101,9 @@ export function createAdminRouter(botInstance) {
         res.json({ success: true });
     });
 
-    // 4. Submissions Review
+    // ---------------------------------------------------------
+    // 4. SUBMISSIONS & REVIEW PIPELINE
+    // ---------------------------------------------------------
     router.get('/tasks', authenticateAdmin, async (req, res) => {
         const tasks = await query('SELECT * FROM tasks ORDER BY id DESC LIMIT 150');
         res.json(tasks.rows);
@@ -124,13 +134,15 @@ export function createAdminRouter(botInstance) {
                 await notifyUser(botInstance, taskRes.rows[0].user_id, msg);
                 return res.json({ success: true });
             }
-            res.status(400).json({ error: 'Invalid action' });
+            res.status(400).json({ error: 'Invalid review action.' });
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
     });
 
-    // 5. User Master Collector
+    // ---------------------------------------------------------
+    // 5. USER MASTER COLLECTOR & AUDIT TRAIL
+    // ---------------------------------------------------------
     router.get('/users/detailed', authenticateAdmin, async (req, res) => {
         const users = await query(`
             SELECT 
@@ -139,19 +151,18 @@ export function createAdminRouter(botInstance) {
                 u.username,
                 u.first_name,
                 u.last_name,
+                u.phone_number,
+                u.language_code,
+                u.is_verified,
                 u.account_status,
                 u.selling_restricted,
                 u.withdrawal_restricted,
-                u.referrer_id,
                 u.created_at,
-                u.updated_at,
                 COALESCE(w.available_balance, 0) AS available_balance,
                 COALESCE(w.hold_balance, 0) AS hold_balance,
                 COALESCE(w.pending_withdrawal, 0) AS pending_withdrawal,
-                (SELECT COUNT(*) FROM tasks WHERE user_id = u.telegram_id) AS total_tasks,
                 (SELECT COUNT(*) FROM tasks WHERE user_id = u.telegram_id AND status = 'APPROVED') AS approved_tasks,
-                (SELECT COUNT(*) FROM tasks WHERE user_id = u.telegram_id AND status = 'REJECTED') AS rejected_tasks,
-                (SELECT COUNT(*) FROM withdrawals WHERE user_id = u.telegram_id) AS total_withdrawals
+                (SELECT COUNT(*) FROM tasks WHERE user_id = u.telegram_id AND status = 'REJECTED') AS rejected_tasks
             FROM users u
             LEFT JOIN wallets w ON u.telegram_id = w.user_id
             ORDER BY u.id DESC
@@ -159,7 +170,26 @@ export function createAdminRouter(botInstance) {
         res.json(users.rows);
     });
 
-    // 6. FIXED Balance Adjustment
+    router.get('/users/:telegramId/activity', authenticateAdmin, async (req, res) => {
+        const { telegramId } = req.params;
+        const [transactions, tasks, withdrawals, holds] = await Promise.all([
+            query('SELECT * FROM wallet_transactions WHERE user_id = $1 ORDER BY id DESC LIMIT 50', [telegramId]),
+            query('SELECT * FROM tasks WHERE user_id = $1 ORDER BY id DESC LIMIT 50', [telegramId]),
+            query('SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY id DESC LIMIT 50', [telegramId]),
+            query('SELECT * FROM holds WHERE user_id = $1 ORDER BY id DESC LIMIT 50', [telegramId])
+        ]);
+
+        res.json({
+            transactions: transactions.rows,
+            tasks: tasks.rows,
+            withdrawals: withdrawals.rows,
+            holds: holds.rows
+        });
+    });
+
+    // ---------------------------------------------------------
+    // 6. BALANCE ADJUSTMENT (ADD / DEDUCT)
+    // ---------------------------------------------------------
     router.post('/users/:telegramId/balance-adjust', authenticateAdmin, async (req, res) => {
         const { telegramId } = req.params;
         const { actionType, amount, balanceType, reason } = req.body;
@@ -190,7 +220,6 @@ export function createAdminRouter(botInstance) {
                 `, [delta, telegramId]);
 
                 const txId = `ADJ-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-                // Uses 'ADJUSTMENT_ADD' or 'ADJUSTMENT_DEDUCT'
                 const txType = actionType === 'ADD' ? 'ADJUSTMENT_ADD' : 'ADJUSTMENT_DEDUCT';
 
                 await client.query(`
@@ -217,33 +246,60 @@ export function createAdminRouter(botInstance) {
         }
     });
 
-    // 7. Ban / Unban
+    // ---------------------------------------------------------
+    // 7. USER STATUS CONTROLS (BAN, UNBAN, RESTRICT)
+    // ---------------------------------------------------------
     router.post('/users/:telegramId/status-action', authenticateAdmin, async (req, res) => {
         const { telegramId } = req.params;
         const { action } = req.body;
 
         let updateSql = '';
-        if (action === 'BAN') {
-            updateSql = "account_status = 'BANNED', selling_restricted = true, withdrawal_restricted = true";
-        } else if (action === 'UNBAN') {
-            updateSql = "account_status = 'ACTIVE', selling_restricted = false, withdrawal_restricted = false";
-        } else {
-            return res.status(400).json({ error: 'Invalid action' });
+        let details = {};
+
+        switch (action) {
+            case 'BAN':
+                updateSql = "account_status = 'BANNED', selling_restricted = true, withdrawal_restricted = true";
+                details = { status: 'BANNED' };
+                break;
+            case 'UNBAN':
+                updateSql = "account_status = 'ACTIVE', selling_restricted = false, withdrawal_restricted = false";
+                details = { status: 'ACTIVE' };
+                break;
+            case 'RESTRICT_SELL':
+                updateSql = "selling_restricted = true";
+                details = { selling_restricted: true };
+                break;
+            case 'UNRESTRICT_SELL':
+                updateSql = "selling_restricted = false";
+                details = { selling_restricted: false };
+                break;
+            case 'RESTRICT_WD':
+                updateSql = "withdrawal_restricted = true";
+                details = { withdrawal_restricted: true };
+                break;
+            case 'UNRESTRICT_WD':
+                updateSql = "withdrawal_restricted = false";
+                details = { withdrawal_restricted: false };
+                break;
+            default:
+                return res.status(400).json({ error: 'Invalid status action.' });
         }
 
         await query(`UPDATE users SET ${updateSql}, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = $1`, [telegramId]);
-        await query(`INSERT INTO audit_logs (admin_id, action, target_type, target_id, details) VALUES ($1, 'USER_STATUS_CHANGE', 'USER', $2, $3)`, [req.admin.username, telegramId, JSON.stringify({ action })]);
+        await query(`INSERT INTO audit_logs (admin_id, action, target_type, target_id, details) VALUES ($1, 'USER_STATUS_CHANGE', 'USER', $2, $3)`, [req.admin.username, telegramId, JSON.stringify({ action, ...details })]);
 
         if (action === 'BAN') {
             await notifyUser(botInstance, telegramId, '⛔ <b>Account Banned:</b> Your account has been suspended by the buyer.');
-        } else {
+        } else if (action === 'UNBAN') {
             await notifyUser(botInstance, telegramId, '🟢 <b>Account Restored:</b> Your account has been reactivated.');
         }
 
         res.json({ success: true });
     });
 
-    // 8. Rich Alerts & Broadcast with Live Buttons + Images
+    // ---------------------------------------------------------
+    // 8. RICH ALERTS & BROADCAST (Images + Buttons)
+    // ---------------------------------------------------------
     router.post('/messages/send-alert', authenticateAdmin, async (req, res) => {
         const { targetType, targetIds, messageText, imageUrl, buttons } = req.body;
         if (!messageText) return res.status(400).json({ error: 'Message text is required.' });
@@ -269,7 +325,7 @@ export function createAdminRouter(botInstance) {
             }
         }
 
-        res.json({ success: true, message: `Broadcasting to ${recipientIds.length} users.` });
+        res.json({ success: true, message: `Broadcasting alert to ${recipientIds.length} users.` });
 
         (async () => {
             for (const uid of recipientIds) {
@@ -281,14 +337,16 @@ export function createAdminRouter(botInstance) {
                         await botInstance.telegram.sendMessage(uid, messageText, extra);
                     }
                 } catch (e) {
-                    console.warn(`Could not deliver to ${uid}:`, e.message);
+                    console.warn(`Delivery failed for ${uid}:`, e.message);
                 }
-                await new Promise(r => setTimeout(r, 45));
+                await new Promise(r => setTimeout(r, 45)); // API rate-limit buffer
             }
         })();
     });
 
-    // 9. Withdrawals
+    // ---------------------------------------------------------
+    // 9. WITHDRAWAL PROCESSING
+    // ---------------------------------------------------------
     router.get('/withdrawals', authenticateAdmin, async (req, res) => {
         const wds = await query('SELECT * FROM withdrawals ORDER BY id DESC LIMIT 100');
         res.json(wds.rows);
@@ -297,23 +355,36 @@ export function createAdminRouter(botInstance) {
     router.post('/withdrawals/:withdrawalId/process', authenticateAdmin, async (req, res) => {
         const { withdrawalId } = req.params;
         const { action, txHash, reason } = req.body;
-        const result = await processAdminWithdrawal(withdrawalId, action, req.admin.username, txHash, reason);
-        const wd = result.withdrawal;
 
-        if (action === 'COMPLETE') {
-            const label = wd.method === 'USDT_ERC20' ? 'USDT — ERC-20' : 'LTC — Litecoin';
-            await notifyUser(botInstance, wd.user_id, `✅ <b>Withdrawal Completed</b>\n\nAmount: $${parseFloat(wd.amount).toFixed(2)}\nMethod: ${label}\nTX Hash: <code>${txHash || 'Confirmed'}</code>`);
-        } else if (action === 'REJECT') {
-            await notifyUser(botInstance, wd.user_id, `❌ <b>Withdrawal Rejected</b>\n\nReason: ${reason || 'Declined'}\n$${parseFloat(wd.amount).toFixed(2)} refunded to your Available Balance.`);
+        try {
+            const result = await processAdminWithdrawal(withdrawalId, action, req.admin.username, txHash, reason);
+            const wd = result.withdrawal;
+
+            if (action === 'COMPLETE') {
+                const label = wd.method === 'USDT_ERC20' ? 'USDT — ERC-20' : 'LTC — Litecoin';
+                await notifyUser(botInstance, wd.user_id, `✅ <b>Withdrawal Completed</b>\n\nAmount: $${parseFloat(wd.amount).toFixed(2)}\nMethod: ${label}\nTX Hash: <code>${txHash || 'Confirmed'}</code>`);
+            } else if (action === 'REJECT') {
+                await notifyUser(botInstance, wd.user_id, `❌ <b>Withdrawal Rejected</b>\n\nReason: ${reason || 'Declined'}\n$${parseFloat(wd.amount).toFixed(2)} has been refunded to your Available Balance.`);
+            }
+            res.json({ success: true, result });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
         }
-        res.json({ success: true, result });
     });
 
-    // 10. Settings
+    // ---------------------------------------------------------
+    // 10. SYSTEM SETTINGS & AUDIT LOGS
+    // ---------------------------------------------------------
     router.get('/settings', authenticateAdmin, async (req, res) => res.json(await getAllSettings()));
+
     router.post('/settings', authenticateAdmin, async (req, res) => {
         for (const [k, v] of Object.entries(req.body)) await setSetting(k, v);
         res.json({ success: true });
+    });
+
+    router.get('/audit-logs', authenticateAdmin, async (req, res) => {
+        const logs = await query('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 100');
+        res.json(logs.rows);
     });
 
     return router;
