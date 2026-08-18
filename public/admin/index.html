@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Velrix Admin Panel — Seller/Buyer Management</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="login-container" class="card">
+        <h2>👑 Buyer Admin Login</h2>
+        <input type="text" id="username" placeholder="Admin Username" />
+        <input type="password" id="password" placeholder="Password" />
+        <button onclick="login()">Login</button>
+        <p id="login-error" class="error"></p>
+    </div>
+
+    <div id="dashboard-container" class="hidden">
+        <header>
+            <h1>Velrix Buyer Control Platform</h1>
+            <button onclick="logout()">Logout</button>
+        </header>
+
+        <nav>
+            <button onclick="loadSection('stats')">📊 Dashboard</button>
+            <button onclick="loadSection('tasks')">📥 Submissions & Tasks</button>
+            <button onclick="loadSection('withdrawals')">💸 Withdrawals</button>
+            <button onclick="loadSection('users')">👥 Users & Balances</button>
+            <button onclick="loadSection('settings')">⚙️ Settings</button>
+            <button onclick="loadSection('broadcast')">📢 Broadcast</button>
+            <button onclick="loadSection('logs')">📝 Audit Logs</button>
+        </nav>
+
+        <main id="content">
+            <!-- Dynamic content loaded via app.js -->
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+:root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --primary: #38bdf8;
+    --text: #f8fafc;
+    --text-muted: #94a3b8;
+    --success: #22c55e;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+}
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+}
+
+.hidden { display: none !important; }
+.card {
+    background: var(--card);
+    padding: 20px;
+    border-radius: 8px;
+    margin: 15px 0;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+#login-container {
+    max-width: 360px;
+    margin: 100px auto;
+    text-align: center;
+}
+
+input, select, textarea, button {
+    width: 100%;
+    padding: 10px;
+    margin: 8px 0;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+button {
+    background: var(--primary);
+    color: #000;
+    font-weight: bold;
+    cursor: pointer;
+    border: none;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 30px;
+    background: #1e293b;
+}
+
+nav {
+    display: flex;
+    gap: 10px;
+    padding: 15px 30px;
+    background: #0f172a;
+    overflow-x: auto;
+}
+
+nav button { width: auto; background: #334155; color: #fff; }
+nav button:hover { background: var(--primary); color: #000; }
+
+main { padding: 20px 30px; }
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #334155;
+}
+
+th { background: #1e293b; }
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 15px;
+}
+
+.stat-card {
+    background: var(--card);
+    padding: 20px;
+    border-radius: 8px;
+    border-left: 4px solid var(--primary);
+}
+
+.stat-val { font-size: 24px; font-weight: bold; margin-top: 5px; }
+.error { color: var(--danger); font-size: 14px; }
+.badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+.badge-APPROVED { background: var(--success); color: #000; }
+.badge-SUBMITTED { background: var(--warning); color: #000; }
+.badge-REJECTED { background: var(--danger); }
