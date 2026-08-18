@@ -9,19 +9,34 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function runMigrations() {
-    console.log('🔄 Running database migrations and schema patches...');
+    console.log('🔄 Running database migrations and self-healing patches...');
     const schemaPath = path.join(__dirname, '../../sql/schema.sql');
-    const sql = fs.readFileSync(schemaPath, 'utf8');
+    let sql = '';
+    
+    if (fs.existsSync(schemaPath)) {
+        sql = fs.readFileSync(schemaPath, 'utf8');
+    }
 
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
-        // 1. Run main schema
-        await client.query(sql);
+        // 1. Execute Base Schema if available
+        if (sql) {
+            await client.query(sql);
+        }
 
-        // 2. Self-Healing Patches for existing tables
-        // Fix wallet_transactions check constraint to allow all adjustment types
+        // 2. Ensure Users table has profile collection and metadata columns
+        await client.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(50);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS language_code VARCHAR(10);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS user_metadata JSONB DEFAULT '{}'::jsonb;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS selling_restricted BOOLEAN DEFAULT FALSE;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_restricted BOOLEAN DEFAULT FALSE;
+        `);
+
+        // 3. Fix wallet_transactions check constraint to support all transaction and adjustment types
         await client.query(`
             ALTER TABLE wallet_transactions DROP CONSTRAINT IF EXISTS wallet_transactions_type_check;
             ALTER TABLE wallet_transactions ADD CONSTRAINT wallet_transactions_type_check CHECK (type IN (
@@ -38,13 +53,13 @@ async function runMigrations() {
             ));
         `);
 
-        // Ensure missing columns exist in tasks
+        // 4. Ensure Tasks table has submitted credentials columns
         await client.query(`
             ALTER TABLE tasks ADD COLUMN IF NOT EXISTS submitted_email VARCHAR(255);
             ALTER TABLE tasks ADD COLUMN IF NOT EXISTS submitted_password VARCHAR(255);
         `);
 
-        // Ensure Admin Task Pool table exists
+        // 5. Ensure Admin Task Pool table exists
         await client.query(`
             CREATE TABLE IF NOT EXISTS admin_task_pool (
                 id BIGSERIAL PRIMARY KEY,
@@ -61,9 +76,10 @@ async function runMigrations() {
                 assigned_task_id VARCHAR(64),
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE INDEX IF NOT EXISTS idx_pool_status ON admin_task_pool(status);
         `);
 
-        // Create default superadmin if not exists
+        // 6. Ensure default Superadmin account exists in admin_users
         const defaultUser = process.env.ADMIN_DEFAULT_USER || 'admin';
         const defaultPass = process.env.ADMIN_DEFAULT_PASS || 'AdminSecurePass2026!';
         const hash = await bcrypt.hash(defaultPass, 10);
@@ -75,7 +91,7 @@ async function runMigrations() {
         `, [defaultUser, hash]);
 
         await client.query('COMMIT');
-        console.log('✅ Migrations and self-healing patches executed successfully.');
+        console.log('✅ Migrations, self-healing patches, and user metadata columns successfully verified.');
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('❌ Migration failed:', err);
